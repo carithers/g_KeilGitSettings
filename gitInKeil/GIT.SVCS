@@ -18,6 +18,15 @@
     QueryRevision=0
     QueryCheckPoint=0
     Initial_Folder=../
+  MenuItem=status
+    Command=git
+    Arguments=status
+    Environment=
+    RunMinimized=1
+    QueryComment=0
+    QueryRevision=0
+    QueryCheckPoint=0
+    Initial_Folder=./..
   MenuItem=add All
     Command=git
     Arguments=add ../.
@@ -31,7 +40,7 @@
     Command=git
     Arguments=commit -m "%R"'
     Environment=
-    RunMinimized=0
+    RunMinimized=1
     QueryComment=0
     QueryRevision=1
     QueryCheckPoint=0
