@@ -38,7 +38,7 @@
 *.obj
 *.m51
 # py 脚本自动生成git信息
-version_info_git.h
+git_info.h
 # s32k144
 *._ac
 
