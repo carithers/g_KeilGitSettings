@@ -1,0 +1,201 @@
+<#
+.SYNOPSIS
+自动检测、安装 Git 和 Python，并配置系统环境变量。具有幂等性，多次运行不会产生副作用。
+#>
+
+# ==========================================
+# 0. 准备工作：权限与网络设置
+# ==========================================
+
+# 强制要求管理员权限
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Warning "权限不足！请以管理员身份运行此脚本。"
+    Write-Host "请按任意键退出..."
+    $null = [Console]::ReadKey('Intercept')
+    exit
+}
+
+# 强制使用 TLS 1.2 进行安全下载，防止部分旧系统下载 GitHub/Python 资源报错
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# ==========================================
+# 动态获取官方最新版本下载链接
+# ==========================================
+Write-Host ">>> 正在联机获取官方最新版本下载链接..." -ForegroundColor Cyan
+
+# 1. 动态获取 Git 最新版 (通过 GitHub 官方 API 获取)
+try {
+    $GitApiUrl = "https://api.github.com/repos/git-for-windows/git/releases/latest"
+    # 调用 GitHub API 并过滤出 64 位 exe 安装包的下载链接
+    $GitRelease = Invoke-RestMethod -Uri $GitApiUrl -UseBasicParsing -ErrorAction Stop
+    $GitUrl = ($GitRelease.assets | Where-Object { $_.name -match "64-bit\.exe$" })[0].browser_download_url
+    Write-Host "    [Git] 成功找到最新版本直链！" -ForegroundColor Green
+	# 打印 Git 的下载链接
+    Write-Host "    [Git] 解析到的链接: $GitUrl" -ForegroundColor Cyan
+} catch {
+    # 兜底机制：如果遇到 GitHub API 限流或网络异常，使用预设的稳定版本
+    $GitUrl = "https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
+    Write-Warning "    [Git] 在线获取最新版失败，将使用内置备用版本。"
+}
+
+# 2. 动态获取 Python 最新版 (通过正则抓取 Python 官方下载页)
+try {
+    $PyPage = Invoke-WebRequest -Uri "https://www.python.org/downloads/" -UseBasicParsing -ErrorAction Stop
+    # 使用正则表达式匹配页面中第一个以 3.x.x 命名的 64位 exe 链接
+    $PyRegex = 'https://www.python.org/ftp/python/3\.\d+\.\d+/python-3\.\d+\.\d+-amd64\.exe'
+    $PythonUrl = [regex]::Match($PyPage.Content, $PyRegex).Value
+    
+    if ([string]::IsNullOrWhiteSpace($PythonUrl)) { throw "未能从网页提取到匹配的链接" }
+    Write-Host "    [Python] 成功找到最新版本直链！" -ForegroundColor Green
+	# 打印 Python 的下载链接
+    Write-Host "    [Python] 解析到的链接: $PythonUrl" -ForegroundColor Cyan
+} catch {
+    # 兜底机制：如果 Python 官网改版导致正则失效，使用预设的稳定版本
+    $PythonUrl = "https://www.python.org/ftp/python/3.13.13/python-3.13.13-amd64.exe"
+    Write-Warning "    [Python] 在线获取最新版失败，将使用内置备用版本。"
+}
+
+$TempDir = $env:TEMP
+$GitInstaller = Join-Path $TempDir "Git-Installer.exe"
+$PythonInstaller = Join-Path $TempDir "Python-Installer.exe"
+
+# ==========================================
+# 辅助函数：安全地添加系统环境变量
+# ==========================================
+function Add-ToSystemPath {
+    param ([string]$TargetDir)
+    
+    if (-not (Test-Path $TargetDir)) {
+        Write-Warning "路径不存在，跳过添加环境变量: $TargetDir"
+        return
+    }
+
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    
+    # 使用正则匹配确保不会重复添加（忽略大小写，匹配边界）
+    $escapedPath = [regex]::Escape($TargetDir)
+    if ($machinePath -notmatch "(^|;)$escapedPath($|;)") {
+        Write-Host ">>> 正在将 $TargetDir 添加到系统 PATH 环境变量..." -ForegroundColor Cyan
+        $newPath = $machinePath
+        if (-not $newPath.EndsWith(";")) { $newPath += ";" }
+        $newPath += $TargetDir
+        
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine")
+        # 同步更新当前会话的 PATH，避免需要重启脚本
+        $env:Path += ";$TargetDir"
+        Write-Host "    [成功] 已添加！" -ForegroundColor Green
+    } else {
+        Write-Host "    [跳过] 环境变量已包含: $TargetDir" -ForegroundColor DarkGray
+    }
+}
+
+# ==========================================
+# 1. 检测并安装 Git
+# ==========================================
+Write-Host "`n================ 检查 Git ================" -ForegroundColor White -BackgroundColor Blue
+
+# 预设默认路径
+$GitDefaultPath = "${env:ProgramFiles}\Git"
+$GitCmdPath = Join-Path $GitDefaultPath "cmd"
+
+# 检查是否已安装
+$GitInstalled = $false
+$GitExe = Get-Command "git" -ErrorAction SilentlyContinue
+
+if ($GitExe) {
+    $GitInstalled = $true
+} elseif (Test-Path Join-Path $GitCmdPath "git.exe") {
+    $GitInstalled = $true
+}
+
+if ($GitInstalled) {
+    Write-Host "[Git] 检测到已安装 Git。" -ForegroundColor Green
+    # 如果是通过命令找到的，动态更新真实路径，避免因安装在非系统盘导致报错
+    if ($GitExe) {
+        $GitCmdPath = Split-Path -Parent $GitExe.Source
+    }
+} else {
+    Write-Host "[Git] 未检测到 Git，准备开始下载..." -ForegroundColor Yellow
+    Write-Host "下载地址: $GitUrl"
+    Invoke-WebRequest -Uri $GitUrl -OutFile $GitInstaller -UseBasicParsing
+    
+    Write-Host "[Git] 下载完成，正在静默安装..." -ForegroundColor Yellow
+    # 极简静默安装参数
+    $process = Start-Process -FilePath $GitInstaller -ArgumentList "/VERYSILENT /NORESTART /NOCANCEL /SP-" -Wait -PassThru
+    
+    if ($process.ExitCode -eq 0) {
+        Write-Host "[Git] 安装成功！" -ForegroundColor Green
+    } else {
+        Write-Warning "[Git] 安装可能存在异常，退出码: $($process.ExitCode)"
+    }
+    
+    # 清理安装包
+    Remove-Item $GitInstaller -Force -ErrorAction SilentlyContinue
+}
+
+# 校验并添加环境变量
+Add-ToSystemPath -TargetDir $GitCmdPath
+
+
+# ==========================================
+# 2. 检测并安装 Python
+# ==========================================
+Write-Host "`n================ 检查 Python ================" -ForegroundColor White -BackgroundColor Blue
+
+# 预设默认路径
+$PythonDefaultPath = "${env:ProgramFiles}\Python312"
+$PythonScriptsPath = Join-Path $PythonDefaultPath "Scripts"
+
+# 检查是否已安装
+$PythonInstalled = $false
+$PyExe = Get-Command "python" -ErrorAction SilentlyContinue
+
+if ($PyExe) {
+    $PythonInstalled = $true
+} elseif (Test-Path Join-Path $PythonDefaultPath "python.exe") {
+    $PythonInstalled = $true
+}
+
+if ($PythonInstalled) {
+    Write-Host "[Python] 检测到已安装 Python。" -ForegroundColor Green
+    # 动态获取已安装的 python.exe 真实路径
+    if ($PyExe) {
+        $PythonDefaultPath = Split-Path -Parent $PyExe.Source
+        $PythonScriptsPath = Join-Path $PythonDefaultPath "Scripts"
+    }
+} else {
+    Write-Host "[Python] 未检测到 Python，准备开始下载..." -ForegroundColor Yellow
+    Write-Host "下载地址: $PythonUrl"
+    Invoke-WebRequest -Uri $PythonUrl -OutFile $PythonInstaller -UseBasicParsing
+    
+    Write-Host "[Python] 下载完成，正在静默安装 (为所有用户安装)..." -ForegroundColor Yellow
+    # 禁止 Python 安装包自带的添加环境变量功能，统一由本脚本的函数接管以保证安全
+    $process = Start-Process -FilePath $PythonInstaller -ArgumentList "/quiet InstallAllUsers=1 PrependPath=0" -Wait -PassThru
+    
+    if ($process.ExitCode -eq 0) {
+        Write-Host "[Python] 安装成功！" -ForegroundColor Green
+    } else {
+        Write-Warning "[Python] 安装可能存在异常，退出码: $($process.ExitCode)"
+    }
+    
+    # 清理安装包
+    Remove-Item $PythonInstaller -Force -ErrorAction SilentlyContinue
+}
+
+# 校验并添加环境变量 (主程序目录和 Scripts pip 目录)
+Add-ToSystemPath -TargetDir $PythonDefaultPath
+Add-ToSystemPath -TargetDir $PythonScriptsPath
+
+
+# ==========================================
+# 3. 结束提示
+# ==========================================
+Write-Host "`n=============================================" -ForegroundColor White
+Write-Host "环境配置脚本执行完毕！" -ForegroundColor Green
+Write-Host "建议: 关闭当前所有终端窗口，重新打开一个新的窗口以使环境变量完全生效。" -ForegroundColor Yellow
+Write-Host "=============================================" -ForegroundColor White
+
+# 替换默认的 Pause，实现“按任意键结束”
+Write-Host "`n请按任意键结束..." -ForegroundColor Cyan
+$null = [Console]::ReadKey('Intercept')
