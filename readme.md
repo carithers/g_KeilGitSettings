@@ -1,4 +1,6 @@
-# Keil软件自用功能配置
+# Keil软件扩展功能配置
 ## 使用Git追踪文件变更
-### 安装Git
+### 安装Git和Python
 - 使用Install GitAndPython文件夹下的Install.bat安装软件(双击); (也可以自行下载安装)
+### 配置Git
+- 使用gitConfig文件夹下的main.py配置git用户名,邮箱和全局忽略文件
