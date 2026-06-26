@@ -6,19 +6,25 @@ import sys
 def main():
     # 1. 定义源文件和目标路径
     src_filename = "global.gitignore"
+    src2_filename = "global.gitattributes"
     # os.path.expanduser("~") 会自动获取当前操作系统的用户主目录 (如 C:\Users\Username 或 /home/username)
     user_home = os.path.expanduser("~")
     dest_filepath = os.path.join(user_home, src_filename)
+    dest2_filepath = os.path.join(user_home, src2_filename)
 
     # 检查当前目录下是否存在 global.gitignore
     if not os.path.exists(src_filename):
         print(f"❌ 错误: 当前目录下未找到 '{src_filename}' 文件，请检查。")
+        sys.exit(1)
+    if not os.path.exists(src2_filename):
+        print(f"❌ 错误: 当前目录下未找到 '{src2_filename}' 文件，请检查。")
         sys.exit(1)
 
     # 2. 将文件复制到用户目录
     try:
         # copy2 会尽量保留文件的元数据 (如修改时间)
         shutil.copy2(src_filename, dest_filepath)
+        shutil.copy2(src2_filename, dest2_filepath)
         print(f"✅ 成功: 已将 '{src_filename}' 复制到 '{dest_filepath}'")
     except Exception as e:
         print(f"❌ 复制文件失败: {e}")
@@ -36,11 +42,13 @@ def main():
     # 4. 准备 Git 配置命令
     # 针对 Windows 系统兼容性，将路径中的反斜杠 \ 替换为正斜杠 /，Git 对正斜杠解析更好
     git_excludesfile_path = dest_filepath.replace("\\", "/")
+    git_excludesfile2_path = dest2_filepath.replace("\\", "/")
 
     git_configs = [
         ["git", "config", "--global", "user.name", git_username],
         ["git", "config", "--global", "user.email", git_email],
-        ["git", "config", "--global", "core.excludesfile", git_excludesfile_path]
+        ["git", "config", "--global", "core.excludesfile", git_excludesfile_path],
+        ["git", "config", "--global", "core.attributesfile", git_excludesfile2_path]
     ]
 
     # 5. 使用 subprocess 执行命令

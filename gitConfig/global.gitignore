@@ -37,7 +37,8 @@
 *.__i
 *.obj
 *.m51
+# py 脚本自动生成git信息
+version_info_git.h
 # s32k144
 *._ac
-**/RTE/GitInfo/
 
