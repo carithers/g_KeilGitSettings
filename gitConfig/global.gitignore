@@ -32,7 +32,7 @@
 *.build_log.htm
 *.l2p
 *.fed
-*.sct
+# *.sct
 *.txt
 *.__i
 *.obj
