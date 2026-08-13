@@ -42,3 +42,7 @@ version_info_git.h
 # s32k144
 *._ac
 
+# Python 缓存
+__pycache__/
+*.py[cod]
+
